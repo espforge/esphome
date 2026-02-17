@@ -43,6 +43,7 @@ AUTO_LOAD = ["json", "web_server_base"]
 CONF_SORTING_GROUP_ID = "sorting_group_id"
 CONF_SORTING_GROUPS = "sorting_groups"
 CONF_SORTING_WEIGHT = "sorting_weight"
+CONF_TEMPERATURE_UNIT = "temperature_unit"
 
 
 web_server_ns = cg.esphome_ns.namespace("web_server")
@@ -206,6 +207,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_LOCAL): cv.boolean,
             cv.Optional(CONF_COMPRESSION, default="gzip"): cv.one_of("gzip", "br"),
             cv.Optional(CONF_SORTING_GROUPS): cv.ensure_list(sorting_group),
+            cv.Optional(CONF_TEMPERATURE_UNIT, default="C"): cv.one_of(
+                "C", "F", upper=True
+            ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     cv.only_on(
@@ -339,6 +343,8 @@ async def to_code(config):
         cg.add_define("USE_WEBSERVER_LOCAL")
     if config[CONF_COMPRESSION] == "gzip":
         cg.add_define("USE_WEBSERVER_GZIP")
+
+    cg.add(var.set_temperature_unit(config[CONF_TEMPERATURE_UNIT]))
 
     if (sorting_group_config := config.get(CONF_SORTING_GROUPS)) is not None:
         cg.add_define("USE_WEBSERVER_SORTING")

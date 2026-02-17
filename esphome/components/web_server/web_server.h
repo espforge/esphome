@@ -7,6 +7,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/controller.h"
 #include "esphome/core/entity_base.h"
+#include "esphome/core/helpers.h"
 #ifdef USE_LOGGER
 #include "esphome/components/logger/logger.h"
 #endif
@@ -244,6 +245,8 @@ class WebServer : public Controller,
    * @param expose_log.
    */
   void set_expose_log(bool expose_log) { this->expose_log_ = expose_log; }
+
+  void set_temperature_unit(const char *unit) { this->use_fahrenheit_ = (unit[0] == 'F'); }
 
   // ========== INTERNAL METHODS ==========
   // (In most use cases you won't need these)
@@ -590,6 +593,16 @@ class WebServer : public Controller,
   const char *js_include_{nullptr};
 #endif
   bool expose_log_{true};
+  bool use_fahrenheit_{false};
+
+  /// Convert a temperature from internal Celsius to the configured display unit.
+  float convert_temp_out_(float celsius) const {
+    return this->use_fahrenheit_ ? celsius_to_fahrenheit(celsius) : celsius;
+  }
+  /// Convert a temperature from the configured display unit back to internal Celsius.
+  float convert_temp_in_(float value) const {
+    return this->use_fahrenheit_ ? fahrenheit_to_celsius(value) : value;
+  }
 
  private:
 #ifdef USE_SENSOR

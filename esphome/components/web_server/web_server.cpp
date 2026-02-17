@@ -1481,15 +1481,20 @@ void WebServer::handle_climate_request(AsyncWebServerRequest *request, const Url
     parse_string_param_(request, ESPHOME_F("fan_mode"), call, &decltype(call)::set_fan_mode);
     parse_string_param_(request, ESPHOME_F("swing_mode"), call, &decltype(call)::set_swing_mode);
 
-    // Parse temperature parameters
-    // static_cast needed to disambiguate overloaded setters (float vs optional<float>)
+    // Parse temperature parameters, converting from display unit to Celsius
+    auto parse_temp = [&](ParamNameType param_name, auto setter) {
+      auto value = parse_number<float>(request->arg(param_name).c_str());
+      if (value.has_value()) {
+        (call.*setter)(this->convert_temp_in_(*value));
+      }
+    };
     using ClimateCall = decltype(call);
-    parse_num_param_(request, ESPHOME_F("target_temperature_high"), call,
-                     static_cast<ClimateCall &(ClimateCall::*) (float)>(&ClimateCall::set_target_temperature_high));
-    parse_num_param_(request, ESPHOME_F("target_temperature_low"), call,
-                     static_cast<ClimateCall &(ClimateCall::*) (float)>(&ClimateCall::set_target_temperature_low));
-    parse_num_param_(request, ESPHOME_F("target_temperature"), call,
-                     static_cast<ClimateCall &(ClimateCall::*) (float)>(&ClimateCall::set_target_temperature));
+    parse_temp(ESPHOME_F("target_temperature_high"),
+               static_cast<ClimateCall &(ClimateCall::*) (float)>(&ClimateCall::set_target_temperature_high));
+    parse_temp(ESPHOME_F("target_temperature_low"),
+               static_cast<ClimateCall &(ClimateCall::*) (float)>(&ClimateCall::set_target_temperature_low));
+    parse_temp(ESPHOME_F("target_temperature"),
+               static_cast<ClimateCall &(ClimateCall::*) (float)>(&ClimateCall::set_target_temperature));
 
     DEFER_ACTION(call, call.perform());
     request->send(200);
@@ -1552,10 +1557,15 @@ std::string WebServer::climate_json_(climate::Climate *obj, JsonDetail start_con
   bool has_state = false;
   root[ESPHOME_F("mode")] = PSTR_LOCAL(climate_mode_to_string(obj->mode));
   root[ESPHOME_F("max_temp")] =
-      (value_accuracy_to_buf(temp_buf, traits.get_visual_max_temperature(), target_accuracy), temp_buf);
+      (value_accuracy_to_buf(temp_buf, this->convert_temp_out_(traits.get_visual_max_temperature()), target_accuracy),
+       temp_buf);
   root[ESPHOME_F("min_temp")] =
-      (value_accuracy_to_buf(temp_buf, traits.get_visual_min_temperature(), target_accuracy), temp_buf);
-  root[ESPHOME_F("step")] = traits.get_visual_target_temperature_step();
+      (value_accuracy_to_buf(temp_buf, this->convert_temp_out_(traits.get_visual_min_temperature()), target_accuracy),
+       temp_buf);
+  root[ESPHOME_F("step")] =
+      this->use_fahrenheit_ ? traits.get_visual_target_temperature_step() * 1.8f
+                            : traits.get_visual_target_temperature_step();
+  root[ESPHOME_F("temperature_unit")] = this->use_fahrenheit_ ? "°F" : "°C";
   if (traits.has_feature_flags(climate::CLIMATE_SUPPORTS_ACTION)) {
     root[ESPHOME_F("action")] = PSTR_LOCAL(climate_action_to_string(obj->action));
     root[ESPHOME_F("state")] = root[ESPHOME_F("action")];
@@ -1580,23 +1590,28 @@ std::string WebServer::climate_json_(climate::Climate *obj, JsonDetail start_con
     root[ESPHOME_F("current_temperature")] =
         std::isnan(obj->current_temperature)
             ? "NA"
-            : (value_accuracy_to_buf(temp_buf, obj->current_temperature, current_accuracy), temp_buf);
+            : (value_accuracy_to_buf(temp_buf, this->convert_temp_out_(obj->current_temperature), current_accuracy),
+               temp_buf);
   }
   if (traits.has_feature_flags(climate::CLIMATE_SUPPORTS_TWO_POINT_TARGET_TEMPERATURE |
                                climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE)) {
     root[ESPHOME_F("target_temperature_low")] =
-        (value_accuracy_to_buf(temp_buf, obj->target_temperature_low, target_accuracy), temp_buf);
+        (value_accuracy_to_buf(temp_buf, this->convert_temp_out_(obj->target_temperature_low), target_accuracy),
+         temp_buf);
     root[ESPHOME_F("target_temperature_high")] =
-        (value_accuracy_to_buf(temp_buf, obj->target_temperature_high, target_accuracy), temp_buf);
+        (value_accuracy_to_buf(temp_buf, this->convert_temp_out_(obj->target_temperature_high), target_accuracy),
+         temp_buf);
     if (!has_state) {
       root[ESPHOME_F("state")] =
-          (value_accuracy_to_buf(temp_buf, (obj->target_temperature_high + obj->target_temperature_low) / 2.0f,
-                                 target_accuracy),
+          (value_accuracy_to_buf(
+               temp_buf,
+               this->convert_temp_out_((obj->target_temperature_high + obj->target_temperature_low) / 2.0f),
+               target_accuracy),
            temp_buf);
     }
   } else {
     root[ESPHOME_F("target_temperature")] =
-        (value_accuracy_to_buf(temp_buf, obj->target_temperature, target_accuracy), temp_buf);
+        (value_accuracy_to_buf(temp_buf, this->convert_temp_out_(obj->target_temperature), target_accuracy), temp_buf);
     if (!has_state)
       root[ESPHOME_F("state")] = root[ESPHOME_F("target_temperature")];
   }
@@ -1878,13 +1893,16 @@ void WebServer::handle_water_heater_request(AsyncWebServerRequest *request, cons
     // Parse mode parameter
     parse_string_param_(request, ESPHOME_F("mode"), base_call, &water_heater::WaterHeaterCall::set_mode);
 
-    // Parse temperature parameters
-    parse_num_param_(request, ESPHOME_F("target_temperature"), base_call,
-                     &water_heater::WaterHeaterCall::set_target_temperature);
-    parse_num_param_(request, ESPHOME_F("target_temperature_low"), base_call,
-                     &water_heater::WaterHeaterCall::set_target_temperature_low);
-    parse_num_param_(request, ESPHOME_F("target_temperature_high"), base_call,
-                     &water_heater::WaterHeaterCall::set_target_temperature_high);
+    // Parse temperature parameters, converting from display unit to Celsius
+    auto parse_wh_temp = [&](ParamNameType param_name, auto setter) {
+      auto value = parse_number<float>(request->arg(param_name).c_str());
+      if (value.has_value()) {
+        (base_call.*setter)(this->convert_temp_in_(*value));
+      }
+    };
+    parse_wh_temp(ESPHOME_F("target_temperature"), &water_heater::WaterHeaterCall::set_target_temperature);
+    parse_wh_temp(ESPHOME_F("target_temperature_low"), &water_heater::WaterHeaterCall::set_target_temperature_low);
+    parse_wh_temp(ESPHOME_F("target_temperature_high"), &water_heater::WaterHeaterCall::set_target_temperature_high);
 
     // Parse away mode parameter
     parse_bool_param_(request, ESPHOME_F("away"), base_call, &water_heater::WaterHeaterCall::set_away);
@@ -1928,25 +1946,27 @@ std::string WebServer::water_heater_json_(water_heater::WaterHeater *obj, JsonDe
   if (traits.get_supports_current_temperature()) {
     float current = obj->get_current_temperature();
     if (!std::isnan(current))
-      root[ESPHOME_F("current_temperature")] = current;
+      root[ESPHOME_F("current_temperature")] = this->convert_temp_out_(current);
   }
 
   if (traits.get_supports_two_point_target_temperature()) {
     float low = obj->get_target_temperature_low();
     float high = obj->get_target_temperature_high();
     if (!std::isnan(low))
-      root[ESPHOME_F("target_temperature_low")] = low;
+      root[ESPHOME_F("target_temperature_low")] = this->convert_temp_out_(low);
     if (!std::isnan(high))
-      root[ESPHOME_F("target_temperature_high")] = high;
+      root[ESPHOME_F("target_temperature_high")] = this->convert_temp_out_(high);
   } else {
     float target = obj->get_target_temperature();
     if (!std::isnan(target))
-      root[ESPHOME_F("target_temperature")] = target;
+      root[ESPHOME_F("target_temperature")] = this->convert_temp_out_(target);
   }
 
-  root[ESPHOME_F("min_temperature")] = traits.get_min_temperature();
-  root[ESPHOME_F("max_temperature")] = traits.get_max_temperature();
-  root[ESPHOME_F("step")] = traits.get_target_temperature_step();
+  root[ESPHOME_F("min_temperature")] = this->convert_temp_out_(traits.get_min_temperature());
+  root[ESPHOME_F("max_temperature")] = this->convert_temp_out_(traits.get_max_temperature());
+  root[ESPHOME_F("step")] =
+      this->use_fahrenheit_ ? traits.get_target_temperature_step() * 1.8f : traits.get_target_temperature_step();
+  root[ESPHOME_F("temperature_unit")] = this->use_fahrenheit_ ? "°F" : "°C";
 
   if (traits.get_supports_away_mode()) {
     root[ESPHOME_F("away")] = obj->is_away();
