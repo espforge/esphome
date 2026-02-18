@@ -1562,9 +1562,7 @@ std::string WebServer::climate_json_(climate::Climate *obj, JsonDetail start_con
   root[ESPHOME_F("min_temp")] =
       (value_accuracy_to_buf(temp_buf, this->convert_temp_out_(traits.get_visual_min_temperature()), target_accuracy),
        temp_buf);
-  root[ESPHOME_F("step")] =
-      this->use_fahrenheit_ ? traits.get_visual_target_temperature_step() * 1.8f
-                            : traits.get_visual_target_temperature_step();
+  root[ESPHOME_F("step")] = traits.get_visual_target_temperature_step();
   root[ESPHOME_F("temperature_unit")] = this->use_fahrenheit_ ? "°F" : "°C";
   if (traits.has_feature_flags(climate::CLIMATE_SUPPORTS_ACTION)) {
     root[ESPHOME_F("action")] = PSTR_LOCAL(climate_action_to_string(obj->action));
@@ -1964,8 +1962,7 @@ std::string WebServer::water_heater_json_(water_heater::WaterHeater *obj, JsonDe
 
   root[ESPHOME_F("min_temperature")] = this->convert_temp_out_(traits.get_min_temperature());
   root[ESPHOME_F("max_temperature")] = this->convert_temp_out_(traits.get_max_temperature());
-  root[ESPHOME_F("step")] =
-      this->use_fahrenheit_ ? traits.get_target_temperature_step() * 1.8f : traits.get_target_temperature_step();
+  root[ESPHOME_F("step")] = traits.get_target_temperature_step();
   root[ESPHOME_F("temperature_unit")] = this->use_fahrenheit_ ? "°F" : "°C";
 
   if (traits.get_supports_away_mode()) {
